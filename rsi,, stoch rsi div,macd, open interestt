@@ -1,0 +1,114 @@
+//@version=5
+indicator("RSI/Stochastic/MACD/Open Interest All on Chart", shorttitle="R/S/M/OI", precision=2)
+
+// Inputs
+ron = input(true, title="Show RSI")
+son = input(true, title="Show Stochastic")
+macdon = input(true, title="Show MACD")
+oin = input(true, title="Show Open Interest")
+
+// RSI Parameters
+rsi_length = input.int(14, title="RSI Length", minval=1)
+rsi_source = input(close, title="RSI Source")
+
+// Stochastic RSI Parameters
+smoothK = input.int(3, minval=1, title="Stoch K Smoothing")
+smoothD = input.int(3, minval=1, title="Stoch D Smoothing")
+lengthRSI = input.int(14, minval=1, title="Stoch RSI Length")
+lengthStoch = input.int(14, minval=1, title="Stoch Length")
+uselog = input(true, title="Log")
+srcIn = input(close, title="Stoch Source")
+showdivs = input(true, title="Show Divergences")
+showhidden = input(false, title="Show Hidden Divergences")
+showchan = input(false, title="Show Divergences Channel")
+
+// MACD Parameters
+macd_fast_length = input.int(12, title="MACD Fast Length", minval=1)
+macd_slow_length = input.int(26, title="MACD Slow Length", minval=1)
+macd_signal_length = input.int(9, title="MACD Signal Smoothing", minval=1)
+macd_source = input(close, title="MACD Source")
+
+// Open Interest Parameters
+overwriteSymbolInput = input.bool(false, "Override symbol", inline = "Override symbol")
+tickerInput = input.symbol("", "", inline = "Override symbol")
+symbolOnly = syminfo.ticker(tickerInput)
+userSymbol = overwriteSymbolInput ? symbolOnly : syminfo.prefix + ":" + syminfo.ticker
+openInterestTicker = str.format("{0}_OI", userSymbol)
+timeframe = syminfo.type == "futures" and timeframe.isintraday ? "1D" : timeframe.period
+
+// RSI Calculation
+rsi = ta.rsi(rsi_source, rsi_length)
+plot(ron ? rsi : na, color=color.aqua, title="RSI", linewidth=3)
+hline(70, "RSI Upper Band", color=color.gray, linestyle=hline.style_dashed)
+hline(30, "RSI Lower Band", color=color.gray, linestyle=hline.style_dashed)
+
+// Stochastic RSI with Divergences
+src = uselog ? math.log(srcIn) : srcIn
+rsi1 = ta.rsi(src, lengthRSI)
+kk = ta.sma(ta.stoch(rsi1, rsi1, rsi1, lengthStoch), smoothK)
+d = ta.sma(kk, smoothD)
+hm = input(false, title="Use Average of both K & D")
+k = hm ? math.avg(kk, d) : kk
+
+a = plot(son ? kk : na, color=color.blue, linewidth=2, transp=0, title="K")
+b = plot(son ? d : na, color=color.orange, linewidth=2, transp=0, title="D")
+f = kk >= d ? color.blue : color.orange
+fill(a, b, title="KD Fill", color=f, transp=90)
+hline(20, "Lower Band", color=color.gray, linestyle=hline.style_dashed)
+hline(80, "Upper Band", color=color.gray, linestyle=hline.style_dashed)
+fill(hline(80), hline(20), color=color.aqua, transp=95, title="Background")
+
+// Divergence Detection
+f_top_fractal(_src) => _src[4] < _src[2] and _src[3] < _src[2] and _src[2] > _src[1] and _src[2] > _src[0]
+f_bot_fractal(_src) => _src[4] > _src[2] and _src[3] > _src[2] and _src[2] < _src[1] and _src[2] < _src[0]
+f_fractalize(_src) => f_top_fractal(_src) ? 1 : f_bot_fractal(_src) ? -1 : 0
+
+fractal_top = f_fractalize(k) > 0 ? k[2] : na
+fractal_bot = f_fractalize(k) < 0 ? k[2] : na
+
+high_prev = ta.valuewhen(fractal_top, k[2], 0)[2]
+high_price = ta.valuewhen(fractal_top, high[2], 0)[2]
+low_prev = ta.valuewhen(fractal_bot, k[2], 0)[2]
+low_price = ta.valuewhen(fractal_bot, low[2], 0)[2]
+
+regular_bearish_div = fractal_top and high[2] > high_price and k[2] < high_prev
+hidden_bearish_div = fractal_top and high[2] < high_price and k[2] > high_prev
+regular_bullish_div = fractal_bot and low[2] < low_price and k[2] > low_prev
+hidden_bullish_div = fractal_bot and low[2] > low_price and k[2] < low_prev
+
+plot(showchan ? fractal_top : na, title="Top Div Channel", offset=-2, color=color.gray)
+plot(showchan ? fractal_bot : na, title="Bottom Div Channel", offset=-2, color=color.gray)
+
+col1 = regular_bearish_div ? color.red : hidden_bearish_div and showhidden ? color.red : na
+col2 = regular_bullish_div ? color.green : hidden_bullish_div and showhidden ? color.green : na
+col3 = regular_bearish_div ? color.red : hidden_bearish_div and showhidden ? color.red : showchan ? color.gray : na
+col4 = regular_bullish_div ? color.green : hidden_bullish_div and showhidden ? color.green : showchan ? color.gray : na
+
+plot(title='H F', series=showdivs and fractal_top ? k[2] : na, color=col1, linewidth=2, offset=-2)
+plot(title='L F', series=showdivs and fractal_bot ? k[2] : na, color=col2, linewidth=2, offset=-2)
+plot(title='H D', series=showdivs and fractal_top ? k[2] : na, style=plot.style_circles, color=col3, linewidth=3, offset=-2)
+plot(title='L D', series=showdivs and fractal_bot ? k[2] : na, style=plot.style_circles, color=col4, linewidth=3, offset=-2)
+
+plotshape(title='+RBD', series=showdivs and regular_bearish_div ? k[2] : na, text='R', style=shape.labeldown, location=location.absolute, color=color.red, textcolor=color.white, offset=-2)
+plotshape(title='+HBD', series=showdivs and hidden_bearish_div and showhidden ? k[2] : na, text='H', style=shape.labeldown, location=location.absolute, color=color.red, textcolor=color.white, offset=-2)
+plotshape(title='-RBD', series=showdivs and regular_bullish_div ? k[2] : na, text='R', style=shape.labelup, location=location.absolute, color=color.green, textcolor=color.white, offset=-2)
+plotshape(title='-HBD', series=showdivs and hidden_bullish_div and showhidden ? k[2] : na, text='H', style=shape.labelup, location=location.absolute, color=color.green, textcolor=color.white, offset=-2)
+
+// MACD Calculation
+[macd_line, signal_line, _] = ta.macd(macd_source, macd_fast_length, macd_slow_length, macd_signal_length)
+plot(macdon ? macd_line : na, title="MACD", color=color.blue, linewidth=1)
+plot(macdon ? signal_line : na, title="Signal Line", color=color.red, linewidth=1)
+
+// Open Interest Calculation
+[oiOpen, oiHigh, oiLow, oiClose, oiColorCond] = request.security(openInterestTicker, timeframe, [open, high, low, close, close > close[1]], ignore_invalid_symbol = true)
+oiOpen := oiOpen ? oiOpen : na
+oiHigh := oiHigh ? oiHigh : na
+oiLow := oiLow ? oiLow : na
+
+if barstate.islastconfirmedhistory and na(oiClose)
+    runtime.error(str.format("No Open Interest data found for the `{0}` symbol.", userSymbol))
+
+hasOHLC = ta.cum(oiOpen)
+color openInterestColor = oiColorCond ? color.teal : color.red
+plot(oin ? (hasOHLC ? na : oiClose) : na, "Futures Open Interest", openInterestColor, style = plot.style_stepline, linewidth = 4)
+plotcandle(oin ? oiOpen : na, oiHigh, oiLow, hasOHLC ? oiClose : na, "Crypto Open Interest", color = openInterestColor, wickcolor = openInterestColor, bordercolor = openInterestColor)
